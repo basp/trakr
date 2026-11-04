@@ -21,7 +21,7 @@ internal sealed class ConsolePlaybackEventSink : IPlaybackEventSink
 
     public void OnEffect(PlaybackPosition position, int channelIndex, EffectCommand effectCommand)
     {
-        Console.WriteLine($"      Effect  {channelIndex:D2} {effectCommand.Code}{effectCommand.Parameter:X2} (placeholder)");
+        Console.WriteLine($"      Effect  {channelIndex:D2} {effectCommand.Code}{effectCommand.Parameter:X2}");
     }
 
     private static string Format(byte? value)

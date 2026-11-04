@@ -47,8 +47,14 @@ var song = new Song(
     initialSpeed: 3,
     initialTempo: 125);
 
-var engine = new PlaybackEngine(song, new ConsolePlaybackEventSink());
+var engine = new PlaybackEngine(song);
+var sink = new ConsolePlaybackEventSink();
 
 Console.WriteLine("Starting Trakr demo playback...");
-engine.PlayToEnd();
+
+while (engine.TryStep(out var step) && step is not null)
+{
+    PlaybackStepEventSinkAdapter.Dispatch(step, sink);
+}
+
 Console.WriteLine("Playback complete.");
