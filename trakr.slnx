@@ -1,5 +1,6 @@
 <Solution>
   <Folder Name="/src/">
+    <Project Path="src/Trakr.Core/Trakr.Core.csproj" />
     <Project Path="src/Trakr.Tests/Trakr.Tests.csproj" />
     <Project Path="src/Trakr/Trakr.csproj" />
   </Folder>
