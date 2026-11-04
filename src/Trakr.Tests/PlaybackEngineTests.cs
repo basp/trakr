@@ -57,6 +57,202 @@ public class PlaybackEngineTests
     }
 
     [Fact]
+    public void Song_rejects_order_jump_targets_past_the_end_of_the_order_list()
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(() => new Song(
+            new[]
+            {
+                CreatePattern(CreateRow(new ChannelEvent(Effect: new EffectCommand("B", 0x02)))),
+                CreatePattern(CreateRow())
+            },
+            new[] { 0, 1 }));
+    }
+
+    [Fact]
+    public void Song_rejects_pattern_breaks_without_a_destination_order()
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(() => new Song(
+            new[]
+            {
+                CreatePattern(CreateRow(new ChannelEvent(Effect: new EffectCommand("D", 0x00))))
+            },
+            new[] { 0 }));
+    }
+
+    [Fact]
+    public void Song_rejects_pattern_break_rows_that_do_not_exist_in_the_destination_order()
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(() => new Song(
+            new[]
+            {
+                CreatePattern(CreateRow(
+                    new ChannelEvent(Effect: new EffectCommand("B", 0x01)),
+                    new ChannelEvent(Effect: new EffectCommand("D", 0x01)))),
+                CreatePattern(CreateRow())
+            },
+            new[] { 0, 1 }));
+    }
+
+    [Fact]
+    public void Song_allows_order_jumps_to_the_last_order_in_the_sequence()
+    {
+        var exception = Record.Exception(() => new Song(
+            new[]
+            {
+                CreatePattern(CreateRow(new ChannelEvent(Effect: new EffectCommand("B", 0x01)))),
+                CreatePattern(CreateRow())
+            },
+            new[] { 0, 1 }));
+
+        Assert.Null(exception);
+    }
+
+    [Fact]
+    public void Song_allows_pattern_breaks_to_the_last_row_of_the_destination_order()
+    {
+        var exception = Record.Exception(() => new Song(
+            new[]
+            {
+                CreatePattern(CreateRow(new ChannelEvent(Effect: new EffectCommand("D", 0x01)))),
+                CreatePattern(CreateRow(), CreateRow())
+            },
+            new[] { 0, 1 }));
+
+        Assert.Null(exception);
+    }
+
+    [Fact]
+    public void TryStep_applies_order_jump_after_the_current_row_finishes()
+    {
+        var song = CreateSong(
+            initialSpeed: 1,
+            CreatePattern(
+                CreateRow(new ChannelEvent(Effect: new EffectCommand("B", 0x01))),
+                CreateRow(new ChannelEvent(Note: 60))),
+            CreatePattern(
+                CreateRow(new ChannelEvent(Note: 61))));
+
+        var engine = new PlaybackEngine(song);
+
+        Assert.True(engine.TryStep(out var step));
+        Assert.NotNull(step);
+        Assert.Equal(new PlaybackPosition(0, 0, 0, 0), step!.Position);
+        Assert.Equal(new PlaybackPosition(1, 1, 0, 0), engine.Position);
+    }
+
+    [Fact]
+    public void TryStep_applies_pattern_break_after_the_current_row_finishes()
+    {
+        var song = CreateSong(
+            initialSpeed: 1,
+            CreatePattern(
+                CreateRow(new ChannelEvent(Effect: new EffectCommand("D", 0x01)))),
+            CreatePattern(
+                CreateRow(new ChannelEvent(Note: 60)),
+                CreateRow(new ChannelEvent(Note: 61)),
+                CreateRow(new ChannelEvent(Note: 62))));
+
+        var engine = new PlaybackEngine(song);
+
+        Assert.True(engine.TryStep(out var step));
+        Assert.NotNull(step);
+        Assert.Equal(new PlaybackPosition(0, 0, 0, 0), step!.Position);
+        Assert.Equal(new PlaybackPosition(1, 1, 1, 0), engine.Position);
+    }
+
+    [Fact]
+    public void TryStep_applies_transport_changes_to_the_current_row_before_flow_redirects()
+    {
+        var song = CreateSong(
+            initialSpeed: 6,
+            CreatePattern(
+                CreateRow(new ChannelEvent(Effect: new EffectCommand("A", 0x03)), new ChannelEvent(Effect: new EffectCommand("B", 0x01)))),
+            CreatePattern(
+                CreateRow(new ChannelEvent(Note: 60))));
+
+        var engine = new PlaybackEngine(song);
+
+        Assert.True(engine.TryStep(out var rowStartStep));
+        Assert.NotNull(rowStartStep);
+        Assert.Equal(3, rowStartStep!.Speed);
+        Assert.Equal(new PlaybackPosition(0, 0, 0, 1), engine.Position);
+
+        Assert.True(engine.TryStep(out var middleTickStep));
+        Assert.NotNull(middleTickStep);
+        Assert.Equal(new PlaybackPosition(0, 0, 0, 1), middleTickStep!.Position);
+        Assert.Equal(new PlaybackPosition(0, 0, 0, 2), engine.Position);
+
+        Assert.True(engine.TryStep(out var finalTickStep));
+        Assert.NotNull(finalTickStep);
+        Assert.Equal(new PlaybackPosition(0, 0, 0, 2), finalTickStep!.Position);
+        Assert.Equal(new PlaybackPosition(1, 1, 0, 0), engine.Position);
+    }
+
+    [Fact]
+    public void TryStep_combines_order_jump_and_pattern_break_on_the_same_row()
+    {
+        var song = CreateSong(
+            initialSpeed: 1,
+            CreatePattern(
+                CreateRow(
+                    new ChannelEvent(Effect: new EffectCommand("B", 0x01)),
+                    new ChannelEvent(Effect: new EffectCommand("D", 0x01)))),
+            CreatePattern(
+                CreateRow(new ChannelEvent(Note: 60)),
+                CreateRow(new ChannelEvent(Note: 61))));
+
+        var engine = new PlaybackEngine(song);
+
+        Assert.True(engine.TryStep(out var step));
+        Assert.NotNull(step);
+        Assert.Equal(new PlaybackPosition(1, 1, 1, 0), engine.Position);
+    }
+
+    [Fact]
+    public void TryStep_uses_the_last_supported_flow_command_in_channel_order()
+    {
+        var song = CreateSong(
+            initialSpeed: 1,
+            CreatePattern(
+                CreateRow(
+                    new ChannelEvent(Effect: new EffectCommand("B", 0x02)),
+                    new ChannelEvent(Effect: new EffectCommand("D", 0x01)),
+                    new ChannelEvent(Effect: new EffectCommand("B", 0x01)),
+                    new ChannelEvent(Effect: new EffectCommand("D", 0x00)))),
+            CreatePattern(
+                CreateRow(new ChannelEvent(Note: 60))),
+            CreatePattern(
+                CreateRow(new ChannelEvent(Note: 61)),
+                CreateRow(new ChannelEvent(Note: 62))));
+
+        var engine = new PlaybackEngine(song);
+
+        Assert.True(engine.TryStep(out var step));
+        Assert.NotNull(step);
+        Assert.Equal(new PlaybackPosition(1, 1, 0, 0), engine.Position);
+    }
+
+    [Fact]
+    public void TryStep_skips_empty_patterns_after_an_order_jump_destination()
+    {
+        var song = new Song(
+            new[]
+            {
+                CreatePattern(CreateRow(new ChannelEvent(Effect: new EffectCommand("B", 0x01)))),
+                CreatePattern(),
+                CreatePattern(CreateRow(new ChannelEvent(Note: 60)))
+            },
+            new[] { 0, 1, 2 },
+            initialSpeed: 1);
+
+        var engine = new PlaybackEngine(song);
+
+        Assert.True(engine.TryStep(out var step));
+        Assert.NotNull(step);
+        Assert.Equal(new PlaybackPosition(2, 2, 0, 0), engine.Position);
+    }
+
+    [Fact]
     public void TryStep_returns_row_start_step_with_ordered_channel_and_effect_payloads()
     {
         var song = CreateSong(
@@ -198,7 +394,7 @@ public class PlaybackEngineTests
             new[]
             {
                 CreatePattern(
-                    CreateRow(new ChannelEvent(Note: 57, Effect: new EffectCommand("D", 0x0F))))
+                    CreateRow(new ChannelEvent(Note: 57, Effect: new EffectCommand("Z", 0x0F))))
             },
             new[] { 0 },
             initialSpeed: 4,
@@ -214,7 +410,7 @@ public class PlaybackEngineTests
         Assert.Equal(4, playbackStep.Speed);
         Assert.Equal(108, playbackStep.Tempo);
         Assert.Single(playbackStep.Effects);
-        Assert.Equal("D", playbackStep.Effects[0].Effect.Code);
+        Assert.Equal("Z", playbackStep.Effects[0].Effect.Code);
         Assert.Equal((byte)0x0F, playbackStep.Effects[0].Effect.Parameter);
     }
 
@@ -265,6 +461,40 @@ public class PlaybackEngineTests
                 "effect:0:A:3",
                 "channel:2:-:-:24:F:125",
                 "effect:2:F:125"
+            },
+            sink.Events);
+    }
+
+    [Fact]
+    public void Step_keeps_supported_flow_effects_and_unsupported_effects_observable_in_deterministic_order()
+    {
+        var sink = new RecordingPlaybackEventSink();
+        var song = CreateSong(
+            1,
+            125,
+            CreatePattern(
+                CreateRow(
+                    new ChannelEvent(Note: 48, Instrument: 2, Effect: new EffectCommand("B", 0x01)),
+                    new ChannelEvent(Volume: 24, Effect: new EffectCommand("Z", 0x0F)),
+                    new ChannelEvent(Effect: new EffectCommand("D", 0x00)))),
+            CreatePattern(
+                CreateRow(new ChannelEvent(Note: 60))));
+
+        var engine = new PlaybackEngine(song, sink);
+
+        Assert.True(engine.Step());
+
+        Assert.Equal(
+            new[]
+            {
+                "tick:0:0:0:0:1:125",
+                "row:0:0:0",
+                "channel:0:48:2:-:B:1",
+                "effect:0:B:1",
+                "channel:1:-:-:24:Z:15",
+                "effect:1:Z:15",
+                "channel:2:-:-:-:D:0",
+                "effect:2:D:0"
             },
             sink.Events);
     }

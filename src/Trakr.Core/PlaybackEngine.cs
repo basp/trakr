@@ -9,6 +9,8 @@ public sealed class PlaybackEngine
     private int _tick;
     private int _speed;
     private int _tempo;
+    private int? _pendingOrderIndex;
+    private int? _pendingRowIndex;
 
     public PlaybackEngine(Song song, IPlaybackEventSink? eventSink = null)
     {
@@ -93,6 +95,17 @@ public sealed class PlaybackEngine
         _speed = speed;
         _tempo = tempo;
 
+        if (FlowControlResolver.TryResolve(row, _orderIndex, out var flowControlTarget))
+        {
+            _pendingOrderIndex = flowControlTarget.OrderIndex;
+            _pendingRowIndex = flowControlTarget.RowIndex;
+        }
+        else
+        {
+            _pendingOrderIndex = null;
+            _pendingRowIndex = null;
+        }
+
         return new PlaybackStep(position, Speed, Tempo, isRowStart: true, row, channelEvents, effects);
     }
 
@@ -106,6 +119,17 @@ public sealed class PlaybackEngine
         }
 
         _tick = 0;
+
+        if (_pendingOrderIndex is int pendingOrderIndex)
+        {
+            _orderIndex = pendingOrderIndex;
+            _rowIndex = _pendingRowIndex ?? 0;
+            _pendingOrderIndex = null;
+            _pendingRowIndex = null;
+            NormalizePosition();
+            return;
+        }
+
         _rowIndex++;
 
         var currentPattern = _song.GetPatternAtOrder(_orderIndex);

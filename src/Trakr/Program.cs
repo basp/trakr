@@ -23,7 +23,7 @@ var song = new Song(
                     new ChannelEvent?[]
                     {
                         null,
-                        new(Note: 57, Instrument: 2, Effect: new EffectCommand("D", 0x0F))
+                        new(Note: 57, Instrument: 2, Effect: new EffectCommand("D", 0x01))
                     })
             }),
         new Pattern(

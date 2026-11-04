@@ -33,6 +33,8 @@ public sealed class Song
             }
         }
 
+        ValidateFlowControlTargets(patternArray, orderArray);
+
         Patterns = patternArray;
         Order = orderArray;
         InitialSpeed = initialSpeed;
@@ -55,5 +57,41 @@ public sealed class Song
         }
 
         return Patterns[Order[orderIndex]];
+    }
+
+    private static void ValidateFlowControlTargets(IReadOnlyList<Pattern> patterns, IReadOnlyList<int> order)
+    {
+        for (var orderIndex = 0; orderIndex < order.Count; orderIndex++)
+        {
+            var pattern = patterns[order[orderIndex]];
+            for (var rowIndex = 0; rowIndex < pattern.RowCount; rowIndex++)
+            {
+                ValidateRowFlowControlTarget(patterns, order, orderIndex, rowIndex, pattern.Rows[rowIndex]);
+            }
+        }
+    }
+
+    private static void ValidateRowFlowControlTarget(IReadOnlyList<Pattern> patterns, IReadOnlyList<int> order, int orderIndex, int rowIndex, Row row)
+    {
+        if (!FlowControlResolver.TryResolve(row, orderIndex, out var target))
+        {
+            return;
+        }
+
+        if (target.OrderIndex >= order.Count)
+        {
+            throw new ArgumentOutOfRangeException(nameof(order), target.OrderIndex, $"Row {rowIndex} in order {orderIndex} targets order {target.OrderIndex}, which does not exist.");
+        }
+
+        if (target.RowIndex is null)
+        {
+            return;
+        }
+
+        var targetPattern = patterns[order[target.OrderIndex]];
+        if (target.RowIndex.Value >= targetPattern.RowCount)
+        {
+            throw new ArgumentOutOfRangeException(nameof(order), target.RowIndex.Value, $"Row {rowIndex} in order {orderIndex} targets row {target.RowIndex.Value} in order {target.OrderIndex}, which does not exist.");
+        }
     }
 }
