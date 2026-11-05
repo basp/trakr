@@ -1,0 +1,45 @@
+{
+  "initialSpeed": 3,
+  "initialTempo": 125,
+  "order": [0, 1],
+  "patterns": [
+    {
+      "rows": [
+        {
+          "channels": [
+            { "note": 48, "instrument": 1, "effect": { "code": "A", "parameter": 3 } },
+            { "note": 55, "instrument": 2 }
+          ]
+        },
+        {
+          "channels": [
+            { "volume": 32 },
+            null
+          ]
+        },
+        {
+          "channels": [
+            null,
+            { "note": 57, "instrument": 2, "effect": { "code": "D", "parameter": 1 } }
+          ]
+        }
+      ]
+    },
+    {
+      "rows": [
+        {
+          "channels": [
+            { "note": 50, "instrument": 1 },
+            { "volume": 24, "effect": { "code": "F", "parameter": 125 } }
+          ]
+        },
+        {
+          "channels": [
+            null,
+            { "note": 62, "instrument": 3 }
+          ]
+        }
+      ]
+    }
+  ]
+}

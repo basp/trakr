@@ -5,115 +5,159 @@ sessionId: session-261105-003711-17k5
 # Requirements
 
 ### Overview & Goals
-Create a new OpenSpec change that extends the existing `song-playback` capability with tracker-style flow control at row start.
+Plan the next change as a new `song-loading` capability: load `Song` definitions from JSON files, let `src/Trakr/Program.cs` run an external song instead of a hard-coded one, and record the chosen architecture and decisions in a new root-level `GUIDE.md`.
 
 ### Scope
 #### In Scope
-- Add `Bxx` order-jump behavior to playback.
-- Add `Dxx` pattern-break behavior to playback.
-- Treat `Dxx` as a raw zero-based row index in the destination order.
-- Allow `Bxx` and `Dxx` to combine on the same row.
-- Reject invalid jump/break destinations before playback begins.
-- Preserve the current deterministic tick, row, channel, and effect ordering already defined for `song-playback`.
+- Introduce a new OpenSpec capability for loading songs from a JSON snapshot format.
+- Keep file-path and file-system concerns in `src/Trakr`, but place JSON parsing and `Song` construction in `src/Trakr.Core`.
+- Map JSON data onto the existing `Song`, `Pattern`, `Row`, `ChannelEvent`, and `EffectCommand` types, including sparse channel slots and row-start effects.
+- Update `src/Trakr/Program.cs` to load a checked-in demo JSON song, with an optional first command-line argument to override the path.
+- Add automated tests for successful loads, malformed input, and semantic validation failures.
+- Create `GUIDE.md` in the solution root to document the loader architecture, JSON contract, and design decisions.
 
 #### Out of Scope
-- New parsing/file-loading formats.
-- Terminal UI or audio output work.
-- Non-flow effects beyond `Bxx` and `Dxx`.
-- Broad changes to public playback result/event contracts unless required by the existing behavior model.
+- Binary tracker imports such as `S3M`.
+- Writing/exporting songs back to disk.
+- New playback semantics beyond what `song-playback` already supports.
+- Terminal UI or audio-output work.
+
+### User Stories
+- As a developer, I want to describe a demo song in a file so I can change playback input without recompiling `Program.cs`.
+- As a future host author, I want the parsing logic in `Trakr.Core` so non-console entry points can reuse song loading.
+- As a maintainer, I want the decisions and architecture captured in `GUIDE.md` so the first input pipeline is easy to extend later.
 
 ### Functional Requirements
-- Row-start flow effects are interpreted on tick zero, alongside the existing transport-effect scan.
-- `Bxx` schedules playback to continue at order `xx` after the current row finishes.
-- `Dxx` schedules playback to continue at row `xx` in the destination order after the current row finishes.
-- If a row has `Dxx` without `Bxx`, the destination order is the next sequential order.
-- If a row has both `Bxx` and `Dxx`, playback continues at the jumped order and the broken row.
-- If multiple supported flow effects appear on one row, channel-order determinism is preserved and the last command affecting each destination field wins.
-- Invalid destination orders or rows are treated as invalid playback setup and must fail before the first playback step.
-- Existing transport effects (`Axx`, `Fxx`) and unsupported-effect observability remain intact.
+- The system must load a valid JSON song file into a fully validated `Song` instance before playback starts.
+- The JSON shape must support song transport settings, order data, patterns, rows, per-channel note/instrument/volume fields, and optional effect commands.
+- Sparse rows and sparse channels must remain representable without forcing placeholder note data.
+- Syntax errors, missing required structural fields, and semantic rule violations must fail fast with actionable exceptions instead of falling through to partial playback.
+- `src/Trakr/Program.cs` must be able to run the checked-in sample JSON song without source edits and optionally accept a file path override.
+- `GUIDE.md` must explain the module boundaries, loading flow, JSON contract, and why parsing lives in `Trakr.Core` while file access stays in `Trakr`.
 
 # Technical Design
 
 ### Current Implementation
-- `openspec/specs/song-playback/spec.md` already defines validation, deterministic stepping, empty-pattern skipping, structured playback steps, transport effects, and passive unsupported effects.
-- `src/Trakr.Core/PlaybackEngine.cs` is the only playback state machine. It scans row-start channel effects, applies supported transport effects immediately through `ApplyTransportEffect`, and advances through order/row/tick state with `AdvancePosition()` and `NormalizePosition()`.
-- `src/Trakr.Core/Song.cs` currently validates static playback setup such as positive initial transport values and valid order references before playback starts.
-- `src/Trakr.Core/PlaybackStep.cs` and `src/Trakr.Core/PlaybackStepEventSinkAdapter.cs` expose the observable per-tick contract and deterministic callback ordering.
-- `src/Trakr.Tests/PlaybackEngineTests.cs` follows a focused rule-per-test style for sequencing, transport effects, unsupported effects, empty-pattern skipping, and event ordering.
-- `src/Trakr/Program.cs` already includes a `D` effect in the demo song, which makes it a good reference surface for the new behavior.
+- `src/Trakr.Core/Song.cs`, `Pattern.cs`, `Row.cs`, `ChannelEvent.cs`, and `EffectCommand.cs` define a compact in-memory tracker model with constructor validation but no serialization layer.
+- `src/Trakr.Core/PlaybackEngine.cs` and `src/Trakr.Tests/PlaybackEngineTests.cs` already establish the core pattern used in this repo: behavior lives in `Trakr.Core`, and focused tests verify it without involving the console host.
+- `src/Trakr/Program.cs` is still the composition root and currently hard-codes a demo `Song` before sending playback events to `src/Trakr/ConsolePlaybackEventSink.cs`.
+- `src/Trakr/Trakr.csproj` references `Trakr.Core` only; there is no content file configuration or loader-specific dependency surface yet.
+- `openspec/specs/song-playback/spec.md` documents playback behavior only; there is no separate capability for input/loading.
+- No `GUIDE.md` currently exists at the solution root, so the documentation deliverable will be a new file.
 
 ### Key Decisions
-- Modify the existing `song-playback` capability rather than introduce a new capability path; the OpenSpec delta should live under `specs/song-playback/spec.md` in the new change.
-- Keep flow-effect handling inside the existing row-start effect scan in `PlaybackEngine`, matching the current transport-effect pattern.
-- Apply `Bxx`/`Dxx` as pending next-position overrides: they are discovered on tick zero of the current row, but they take effect only when the row boundary is reached.
-- Interpret `Dxx` as a raw zero-based row index, not tracker-decimal decoding.
-- Reject invalid jump/break destinations before playback starts, following the current validation style seen in `Song.cs` rather than silently ignoring bad control flow.
-- Preserve the current public observation boundary (`PlaybackStep`, `IPlaybackEventSink`, `PlaybackStepEventSinkAdapter`) unless implementation proves extra metadata is strictly necessary.
+- Create a new capability, `song-loading`, rather than extending `song-playback`, because this change introduces a new input pipeline instead of changing playback semantics.
+- Use a JSON snapshot as the first loadable format because it maps directly to the existing model and keeps the initial parser smaller than a custom text grammar or tracker-like import format.
+- Keep file reading and path resolution in `src/Trakr/Program.cs`, but move JSON parsing and model construction into `Trakr.Core` so tests and future hosts can reuse it.
+- Reuse the existing model constructors for semantic validation instead of duplicating playback rules in a separate validation layer.
+- Add a dedicated loader test file in `src/Trakr.Tests` rather than overloading `PlaybackEngineTests.cs` with parsing concerns.
+- Treat `GUIDE.md` as part of the change, not an afterthought: it should capture the architecture that this first file-input pipeline introduces.
 
 ### Proposed Changes
-- Extend the OpenSpec change artifacts to describe `Bxx` order jump, `Dxx` pattern break, their combined behavior, and their interaction with the existing deterministic stepping rules.
-- Add playback-engine logic to resolve pending destination overrides from row-start effects while keeping the current same-row transport behavior unchanged.
-- Add upfront validation over song rows/effects so impossible order or row destinations are rejected before playback begins.
-- Reuse existing normalization behavior so destinations that land on valid empty ordered patterns continue through the existing `NormalizePosition()` skip logic.
-- Update the console demo in `src/Trakr/Program.cs` only as a lightweight example surface after the core behavior is specified and tested.
+- Add a small loader surface in `Trakr.Core` that accepts JSON content from the host and returns a validated `Song`.
+- Introduce internal JSON contract types or parsing helpers in `Trakr.Core` so transport settings, patterns, rows, and channel effects can be decoded without leaking JSON concerns into `Song` itself.
+- Update `src/Trakr/Program.cs` so it resolves a file path, opens the JSON file, delegates parsing to `Trakr.Core`, and then reuses the existing playback engine and `ConsolePlaybackEventSink` unchanged.
+- Check in a sample JSON song and configure `src/Trakr/Trakr.csproj` so the sample is available when running the console app locally.
+- Add `GUIDE.md` at the repo root to document the chosen JSON format, the host/core boundary, and how this loader fits with future formats that are still out of scope today.
 
 ### Data Models / Contracts
-- No new public domain type is required; the likely implementation is internal pending destination state in `PlaybackEngine` such as:
-  - `pendingOrderIndex`
-  - `pendingRowIndex`
-- Validation will need to inspect `Song.Patterns`, `Song.Order`, and row/channel `EffectCommand` values before stepping starts.
-- Observable contracts stay centered on existing outputs:
-  - `PlaybackStep.Position`
-  - `PlaybackStep.Speed`
-  - `PlaybackStep.Tempo`
-  - `IPlaybackEventSink.OnTick/OnRow/OnChannelEvent/OnEffect`
+- Recommended loader surface in `Trakr.Core`:
+  - `SongJsonLoader.Load(Stream stream)` returns `Song`
+  - Optional overload: `SongJsonLoader.Load(string json)` for test ergonomics if it reduces fixture noise
+- Recommended JSON shape:
+  ```json
+  {
+    "initialSpeed": 6,
+    "initialTempo": 125,
+    "order": [0, 1],
+    "patterns": [
+      {
+        "rows": [
+          {
+            "channels": [
+              { "note": 48, "instrument": 1, "effect": { "code": "A", "parameter": 3 } },
+              null
+            ]
+          }
+        ]
+      }
+    ]
+  }
+  ```
+- Contract rules:
+  - `patterns`, `rows`, and `channels` preserve the existing nested model shape.
+  - Channel entries may be `null` to represent sparse tracker cells.
+  - `effect.code` remains a string so existing `EffectCommand` normalization continues to apply.
+  - Semantic rules such as invalid order references or invalid `Bxx`/`Dxx` targets remain enforced by `Song` construction.
+
+### File Structure
+- Add `GUIDE.md` at the solution root.
+- Add loader code under `src/Trakr.Core/` such as `SongJsonLoader.cs` and any internal JSON contract/helper files it needs.
+- Modify `src/Trakr/Program.cs` to switch from in-memory song construction to file-backed loading.
+- Modify `src/Trakr/Trakr.csproj` to include the checked-in sample JSON file as content.
+- Add a sample song file under `src/Trakr/` or another repo-local runtime location used by the console app.
+- Add a dedicated test file such as `src/Trakr.Tests/SongJsonLoaderTests.cs`.
+
+### Architecture Diagram
+```mermaid
+graph LR
+  File[JSON song file] --> App[Trakr Program]
+  App --> Loader[Trakr.Core SongJsonLoader]
+  Loader --> Model[Song Pattern Row]
+  Model --> Engine[PlaybackEngine]
+  Engine --> Sink[ConsolePlaybackEventSink]
+  Tests[Trakr.Tests] --> Loader
+```
 
 ### Risks
-- `Bxx`/`Dxx` interact with both `AdvancePosition()` and `NormalizePosition()`, so empty-pattern skipping and end-of-song completion need explicit tests.
-- Early validation may fit awkwardly between `Song` and `PlaybackEngine`; the change should keep responsibility clear instead of scattering rule checks.
-- Combined transport and flow effects on one row can be easy to misread, so spec scenarios should separate “affects current row transport” from “affects next row destination.”
+- JSON field optionality can drift away from the core model if the contract is too loose; keep the first schema close to the existing constructor shape.
+- Error handling can become inconsistent if the loader mixes syntax and semantic failures; let parsing surface structural issues and let `Song` keep enforcing model rules.
+- Sample-file path handling can be brittle across `dotnet run` and test environments; keep the host path logic small and document it clearly in `GUIDE.md`.
 
 # Testing
 
 ### Validation Approach
-- Extend `src/Trakr.Tests/PlaybackEngineTests.cs` with deterministic unit tests, following the current one-rule-per-scenario pattern.
-- Validate behavior through `TryStep()`/`Step()` outputs and existing event-sink dispatch, not through console-only observation.
+- Add focused loader tests in `src/Trakr.Tests/SongJsonLoaderTests.cs` that construct songs from JSON without involving console output.
+- Reuse the existing playback engine as an integration backstop by loading the sample JSON and verifying it can still drive the current console playback flow.
+- Validate the documentation output by checking that `GUIDE.md` reflects the implemented file paths, boundaries, and JSON contract.
 
 ### Key Scenarios
-- `Bxx` jumps to a different order after the current row completes.
-- `Dxx` breaks to a specific row in the next sequential order.
-- `Bxx` + `Dxx` on the same row combine into a jumped order plus explicit row target.
-- Later channel events override earlier flow targets for the same field.
-- Transport updates on the triggering row still apply immediately while flow redirects apply only after the row boundary.
+- Load a minimal valid JSON song with one pattern and one row.
+- Load a JSON song that contains sparse channel slots and effect commands.
+- Reject malformed JSON or missing top-level arrays such as `order` or `patterns`.
+- Reject semantically invalid payloads that the existing `Song` constructor already disallows, including bad order references and invalid flow-control targets.
+- Run `src/Trakr/Program.cs` against the checked-in sample file and confirm playback still traces through the existing sink.
 
 ### Edge Cases
-- Jumping to the final order and completing after its final row.
-- Jumping or breaking into an empty ordered pattern and preserving the existing skip behavior.
-- Rejecting invalid order indices or invalid row indices before playback starts.
-- Preserving unsupported-effect visibility and current event ordering when supported flow effects are present.
+- Empty patterns that are valid for playback normalization but still require correct JSON decoding.
+- Rows with different channel populations across patterns.
+- Effect codes with mixed casing that should normalize through `EffectCommand`.
+- File-path override behavior when the user supplies a relative path versus relying on the bundled sample.
 
 ### Test Changes
-- Add focused tests in `PlaybackEngineTests.cs` for valid `Bxx`, valid `Dxx`, combined commands, precedence, invalid-target rejection, and empty-pattern destination handling.
-- Keep `Program.cs` as optional manual confirmation only; no dedicated console-surface test suite is needed for this change.
+- Add `SongJsonLoaderTests.cs` for parsing/validation coverage.
+- Keep `PlaybackEngineTests.cs` focused on playback semantics unless one end-to-end loader scenario is needed to prove the loaded model behaves correctly.
+- Use `dotnet test` for automated verification and `dotnet run --project src\Trakr\Trakr.csproj` for a final manual smoke check with the sample JSON.
 
 # Delivery Steps
 
-### ✓ Step 1: Add upfront validation for jump and break destinations
-Playback rejects invalid `Bxx` and `Dxx` destinations before the first step begins.
-- Extend the current validation boundary in `src/Trakr.Core/Song.cs` or `src/Trakr.Core/PlaybackEngine.cs` so row-start flow commands are checked against `Song.Order` and the target pattern row counts.
-- Define the exact validity rules for `Bxx` destination orders and `Dxx` raw zero-based row indices.
-- Add failing and passing coverage in `src/Trakr.Tests/PlaybackEngineTests.cs` for invalid order targets, invalid row targets, and valid edge destinations.
+### ✓ Step 1: Add a reusable JSON loading boundary in `Trakr.Core`
+`Trakr.Core` can construct a validated `Song` from JSON input without depending on file-system paths.
+- Add `SongJsonLoader` and any internal JSON contract/helper types under `src/Trakr.Core`.
+- Map JSON transport, order, pattern, row, channel, and effect data onto the existing model types.
+- Route semantic validation through the current `Song` and `EffectCommand` constructors instead of duplicating rule logic.
+- Add focused unit coverage in `src/Trakr.Tests/SongJsonLoaderTests.cs` for valid and invalid payloads.
 
-### ✓ Step 2: Implement pending flow-control resolution in the playback engine
-`PlaybackEngine` applies `Bxx` and `Dxx` as row-start commands that redirect playback only after the current row completes.
-- Update `src/Trakr.Core/PlaybackEngine.cs` to scan supported flow effects during tick-zero step construction alongside existing transport effects.
-- Store pending destination overrides so `AdvancePosition()` can switch to the chosen order and row at the next row boundary.
-- Preserve current semantics where transport changes affect the current row immediately, while flow-control changes affect the next playback position.
-- Keep `src/Trakr.Core/PlaybackStep.cs` and `src/Trakr.Core/PlaybackStepEventSinkAdapter.cs` compatible with the existing observable contract unless an internal-only helper is sufficient.
+### ✓ Step 2: Wire the console host to external song files
+Running `src/Trakr` loads playback input from JSON rather than hard-coded song construction.
+- Update `src/Trakr/Program.cs` so it resolves a default sample path and optionally accepts a first-argument override.
+- Add a checked-in sample JSON song and configure `src/Trakr/Trakr.csproj` so the file is available at runtime.
+- Reuse the existing `PlaybackEngine` and `ConsolePlaybackEventSink` flow after loading completes.
+- Confirm the sample JSON still exercises the current playback behavior already covered in `song-playback`.
 
-### ✓ Step 3: Lock down combined-command and normalization behavior
-Playback handles combined `Bxx` + `Dxx` rows, channel-order precedence, and empty-pattern destinations deterministically.
-- Add targeted tests in `src/Trakr.Tests/PlaybackEngineTests.cs` for combined jump-and-break rows and last-wins channel-order behavior.
-- Verify redirected playback still cooperates with `NormalizePosition()` when a destination order resolves to an empty pattern.
-- Confirm unsupported effects remain observable and event dispatch ordering stays unchanged when supported flow effects are present.
-- Refresh `src/Trakr/Program.cs` only as a lightweight demo example if the current hard-coded song should showcase the new behavior.
+### ✓ Step 3: Document the architecture and lock down end-to-end behavior
+The repository includes durable guidance for the new loader architecture and a verified end-to-end song-loading path.
+- Create `GUIDE.md` in the solution root documenting the host/core boundary, JSON contract, extension points, and the key decisions chosen for this first loader.
+- Make sure `GUIDE.md` references the concrete implementation files added or modified by the change.
+- Run the automated tests and a console smoke run to verify the sample file loads and plays successfully.
+- Keep the documentation aligned with the final code paths and runtime assumptions so future changes can extend the loader cleanly.

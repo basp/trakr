@@ -11,4 +11,8 @@
     <ProjectReference Include="..\Trakr.Core\Trakr.Core.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <None Include="demo-song.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>
